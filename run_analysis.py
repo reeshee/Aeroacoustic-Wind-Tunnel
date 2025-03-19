@@ -94,19 +94,20 @@ def set_output_folder(folder):
     NOISE_ISOLATED_FFT_FILE = os.path.join(folder, "noise_isolated_fft.csv")
     NOISE_ISOLATED_THIRDOCT_FILE = os.path.join(folder, "noise_isolated_thirdoct.csv")
 
-def start_new_experiment(self):
+def start_new_experiment():
     from tkinter import simpledialog
+    global output_folder, experiment_start_time, time_series, speed_series
     custom_name = simpledialog.askstring("Experiment Name", "Enter a custom experiment name:")
     if custom_name is None or custom_name.strip() == "":
         start_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         custom_name = f"experiment_{start_time_str}"
-    self.output_folder = custom_name
-    os.makedirs(self.output_folder, exist_ok=True)
-    self.set_output_folder(self.output_folder)
-    self.experiment_start_time = time.time()
-    self.time_series = []
-    self.speed_series = []
-    messagebox.showinfo("New Experiment", f"New experiment folder created:\n{self.output_folder}")
+    output_folder = custom_name
+    os.makedirs(output_folder, exist_ok=True)
+    set_output_folder(output_folder)
+    experiment_start_time = time.time()
+    time_series = []
+    speed_series = []
+    messagebox.showinfo("New Experiment", f"New experiment folder created:\n{output_folder}")
 
 def reset_experiment():
     """Stops the fan and resets all graphs (but does not start a new experiment)."""
