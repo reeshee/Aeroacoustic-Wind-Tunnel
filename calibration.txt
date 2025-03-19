@@ -1,0 +1,1 @@
+@ 1 KHz tone, apple watch detected 86 dB SPL, microphone detected 99.4 dB SPL
