@@ -9,9 +9,11 @@ import sounddevice as sd
 import threading
 import time
 import matplotlib
-matplotlib.use("TkAgg")  # Use the TkAgg backend for embedding
+matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
+from matplotlib.pyplot import figure
+from helpers import show_serial_debug_window
 
 # Pillow for loading images
 from PIL import Image, ImageTk
@@ -81,6 +83,8 @@ fan_speed_record_thread = None
 experiment_start_time = None
 time_series = []
 speed_series = []
+pwm_time_series = []
+pwm_series = []
 time_speed_line = None  # This will be the red line for the time-series plot
 
 # ------------------------------
@@ -96,7 +100,7 @@ def set_output_folder(folder):
 
 def start_new_experiment():
     from tkinter import simpledialog
-    global output_folder, experiment_start_time, time_series, speed_series
+    global output_folder, experiment_start_time, time_series, speed_series, pwm_time_series, pwm_series
     custom_name = simpledialog.askstring("Experiment Name", "Enter a custom experiment name:")
     if custom_name is None or custom_name.strip() == "":
         start_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -107,6 +111,8 @@ def start_new_experiment():
     experiment_start_time = time.time()
     time_series = []
     speed_series = []
+    pwm_time_series = []
+    pwm_series = []
     messagebox.showinfo("New Experiment", f"New experiment folder created:\n{output_folder}")
 
 def reset_experiment():
@@ -120,9 +126,11 @@ def reset_experiment():
     update_plot(axs[0,1], operation_plot, np.array([]), "Operation Noise FFT", fig)
     update_plot(axs[1,0], noise_isolated_plot, np.array([]), "Noise-Isolated FFT", fig)
     # Reset the time-series plot (assuming you use time_speed_line for Air Speed vs Time)
-    global time_series, speed_series
+    global time_series, speed_series, pwm_time_series, pwm_series
     time_series = []
     speed_series = []
+    pwm_time_series = []
+    pwm_series = []
     time_speed_line.set_data([], [])
     canvas.draw()
 
@@ -193,12 +201,7 @@ def compute_noise_isolation():
 # COM Port Fan Speed & PWM Section
 # ------------------------------
 def handle_serial_data(data):
-    """
-    Callback for COM port data.
-    Expects sensor readings prefixed with "AD" (e.g., "AD1.01")
-    or PWM signals prefixed with "PWM" (e.g., "PWM180").
-    """
-    global current_air_speed, last_update_time, last_speed, current_pwm
+    global current_air_speed, last_update_time, last_speed, current_pwm, debug_window
     try:
         data = data.strip()
         if data.startswith("AD"):
@@ -218,6 +221,9 @@ def handle_serial_data(data):
                 current_pwm = data
         else:
             print("Arduino Console:", data)
+        # Duplicate the data into the serial debug window
+        if debug_window is not None and debug_window.winfo_exists():
+            root.after(0, lambda: debug_window.append_data(data))
         root.after(0, update_fan_speed_label)
     except Exception as e:
         print("Error in handle_serial_data:", e)
@@ -249,17 +255,24 @@ def set_fan_speed():
         messagebox.showerror("Error", f"Unexpected error: {e}")
 
 def periodic_fan_check():
-    """
-    Periodically update the air speed status label and the time-series plot.
-    Called via root.after().
-    """
     update_fan_speed_label()
-    if experiment_start_time is not None and isinstance(current_air_speed, (int, float)):
+    if experiment_start_time is not None:
         t = time.time() - experiment_start_time
-        time_series.append(t)
-        speed_series.append(current_air_speed)
-        time_speed_line.set_data(time_series, speed_series)
-        axs[1,1].set_xlim(0, t + 1)
+
+        # Update Speed vs. Time
+        if isinstance(current_air_speed, (int, float)):
+            time_series.append(t)
+            speed_series.append(current_air_speed)
+            time_speed_line.set_data(time_series, speed_series)
+            ax_speed.set_xlim(0, t + 1)
+
+        # Update PWM vs. Time
+        if isinstance(current_pwm, (int, float)):
+            pwm_time_series.append(t)
+            pwm_series.append(current_pwm)
+            time_pwm_line.set_data(pwm_time_series, pwm_series)
+            ax_pwm.set_xlim(0, t + 1)
+
     canvas.draw()
     root.after(125, periodic_fan_check)
 
@@ -395,6 +408,12 @@ root.state("zoomed")
 # Create a menubar
 menubar = tk.Menu(root)
 
+debug_window = None
+
+def open_serial_debug():
+    global debug_window
+    debug_window = show_serial_debug_window(debug_window)
+
 # File menu with "Reset Experiment"
 file_menu = tk.Menu(menubar, tearoff=0)
 file_menu.add_command(label="Reset Experiment", command=reset_experiment)
@@ -402,11 +421,12 @@ menubar.add_cascade(label="File", menu=file_menu)
 
 # Tools menu (empty for now)
 tools_menu = tk.Menu(menubar, tearoff=0)
+tools_menu.add_command(label="Serial Debugging", command=open_serial_debug)
 menubar.add_cascade(label="Tools", menu=tools_menu)
 
 # Help menu with an About option
 help_menu = tk.Menu(menubar, tearoff=0)
-help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "Wind Tunnel FFT v0.96"))
+help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "Wind Tunnel FFT v0.98 (alpha)"))
 menubar.add_cascade(label="Help", menu=help_menu)
 
 # Attach the menubar to the root window
@@ -424,7 +444,7 @@ right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 # Create the figure & embed it
 fig, axs = setup_plot()
-fig.set_constrained_layout(True)
+# fig.set_constrained_layout(True)
 
 # Make figure background black
 fig.patch.set_facecolor("#000000")
@@ -459,20 +479,49 @@ background_spl = np.full_like(freqs, -50)
 operation_spl = np.full_like(freqs, -50)
 noise_isolated_spl = np.full_like(freqs, -50)
 
-background_plot, = axs[0, 0].plot(freqs, background_spl, color='blue', lw=1)
-operation_plot, = axs[0, 1].plot(freqs, operation_spl, color='blue', lw=1)
-noise_isolated_plot, = axs[1, 0].plot(freqs, noise_isolated_spl, color='blue', lw=1)
+background_plot, = axs[0, 0].plot(freqs, background_spl, color='violet', lw=1)
+operation_plot, = axs[0, 1].plot(freqs, operation_spl, color='aquamarine', lw=1)
+noise_isolated_plot, = axs[1, 0].plot(freqs, noise_isolated_spl, color='gold', lw=1)
 
 for freq_ax in [axs[0,0], axs[0,1], axs[1,0]]:
     freq_ax.axvspan(1, 1715, facecolor='gray', alpha=0.3)
 
-# Configure the bottom-right subplot for time-series (Air Speed vs. Time)
-axs[1,1].axis("on")
-time_speed_line, = axs[1,1].plot([], [], color='red', lw=2)
-axs[1,1].set_ylim(-1, 11)
-axs[1,1].set_xlabel("Time (s)", color='white')
-axs[1,1].set_ylabel("Air Speed (m/s)", color='white')
-axs[1,1].set_title("Air Speed vs. Time", color='white')
+bottom_right_gs = axs[1,1].get_gridspec()
+axs[1,1].remove()
+
+sub_gs = bottom_right_gs[1,1].subgridspec(2, 1, height_ratios=[1, 1], hspace=0)
+
+ax_speed = fig.add_subplot(sub_gs[0,0])
+ax_speed.set_facecolor("#000000")
+ax_speed.tick_params(axis='x', colors='white')
+ax_speed.tick_params(axis='y', colors='white')
+ax_speed.xaxis.label.set_color('white')
+ax_speed.yaxis.label.set_color('white')
+ax_speed.title.set_color('white')
+for spine in ax_speed.spines.values():
+    spine.set_color('white')
+
+time_speed_line, = ax_speed.plot([], [], color='red', lw=2)
+ax_speed.set_ylim(-1, 11)
+ax_speed.set_xlabel("Time (s)", color='white')
+ax_speed.set_ylabel("Air Speed (m/s)", color='white')
+ax_speed.set_title("Air Speed vs. Time", color='white')
+
+ax_pwm = fig.add_subplot(sub_gs[1,0])
+ax_pwm.set_facecolor("#000000")
+ax_pwm.tick_params(axis='x', colors='white')
+ax_pwm.tick_params(axis='y', colors='white')
+ax_pwm.xaxis.label.set_color('white')
+ax_pwm.yaxis.label.set_color('white')
+ax_pwm.title.set_color('white')
+for spine in ax_pwm.spines.values():
+    spine.set_color('white')
+
+time_pwm_line, = ax_pwm.plot([], [], color='lime', lw=2)
+ax_pwm.set_ylim(0, 260)
+ax_pwm.set_xlabel("Time (s)", color='white')
+ax_pwm.set_ylabel("PWM", color='white')
+ax_pwm.set_title("PWM vs. Time", color='white')
 
 # ------------------------------
 # LOAD & ATTACH BUTTON IMAGES
