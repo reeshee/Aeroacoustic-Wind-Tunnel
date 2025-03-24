@@ -26,15 +26,12 @@ def resource_path(relative_path):
     Get absolute path to resource, works for dev and for PyInstaller.
     """
     try:
-        # When running in a PyInstaller bundle, sys._MEIPASS is where files are extracted
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-# ------------------------------
-# Import your existing FFT functions
-# ------------------------------
+
 from live_spectrogram import (
     compute_fft,
     compute_1_3_octave_band_spl,
@@ -46,14 +43,8 @@ from live_spectrogram import (
     audio_queue
 )
 
-# ------------------------------
-# Import the COM port module for fan speed control
-# ------------------------------
 from com_port import ComPortHandler
 
-# ------------------------------
-# Global Variables for Experiment Data
-# ------------------------------
 output_folder = None
 background_spl = None
 operation_spl = None
@@ -85,7 +76,7 @@ time_series = []
 speed_series = []
 pwm_time_series = []
 pwm_series = []
-time_speed_line = None  # This will be the red line for the time-series plot
+time_speed_line = None
 
 # ------------------------------
 # Experiment Folder Functions
@@ -121,10 +112,24 @@ def reset_experiment():
         com_handler.send_fan_speed(0)  # Stop the fan
     except Exception as e:
         messagebox.showerror("Error", f"Could not stop the fan: {e}")
-    # Reset FFT plots by clearing their data (here we simply set empty arrays)
-    update_plot(axs[0,0], background_plot, np.array([]), "Background Noise FFT", fig)
-    update_plot(axs[0,1], operation_plot, np.array([]), "Operation Noise FFT", fig)
-    update_plot(axs[1,0], noise_isolated_plot, np.array([]), "Noise-Isolated FFT", fig)
+
+    background_plot.set_data([], [])
+    axs[0,0].relim()
+    axs[0,0].autoscale_view()
+    axs[0,0].set_title("Background Noise FFT")
+    
+    # Clear Operation Noise FFT plot
+    operation_plot.set_data([], [])
+    axs[0,1].relim()
+    axs[0,1].autoscale_view()
+    axs[0,1].set_title("Operation Noise FFT")
+    
+    # Clear Noise-Isolated FFT plot
+    noise_isolated_plot.set_data([], [])
+    axs[1,0].relim()
+    axs[1,0].autoscale_view()
+    axs[1,0].set_title("Noise-Isolated FFT")
+    
     # Reset the time-series plot (assuming you use time_speed_line for Air Speed vs Time)
     global time_series, speed_series, pwm_time_series, pwm_series
     time_series = []
@@ -380,6 +385,60 @@ def set_y_axis_specific():
     canvas.draw()
 
 # ------------------------------
+# Microphone Customization
+# ------------------------------
+def set_microphone_settings():
+    # Create a Toplevel window
+    settings_win = tk.Toplevel(root)
+    settings_win.title("Microphone Settings")
+    settings_win.configure(bg="#2b2b2b")
+
+    # Variables to store user selections
+    sr_var = tk.StringVar(value="44100")
+    bd_var = tk.StringVar(value="16")
+
+    # Label + Dropdown for Sample Rate
+    freq_label = tk.Label(settings_win, text="Sample Rate:", fg="white", bg="#2b2b2b")
+    freq_label.pack(pady=(10,0))
+    freq_dropdown = tk.OptionMenu(settings_win, sr_var, "44100", "96000")
+    freq_dropdown.config(bg="#3a3a3a", fg="white", highlightthickness=0)
+    freq_dropdown.pack(pady=(0,10))
+
+    # Label + Dropdown for Bit Depth
+    bit_label = tk.Label(settings_win, text="Bit Depth:", fg="white", bg="#2b2b2b")
+    bit_label.pack(pady=(0,0))
+    bit_dropdown = tk.OptionMenu(settings_win, bd_var, "16", "24")
+    bit_dropdown.config(bg="#3a3a3a", fg="white", highlightthickness=0)
+    bit_dropdown.pack(pady=(0,10))
+
+    # Callback for "Apply" button
+    def apply_settings():
+        try:
+            sr = int(sr_var.get())
+            if sr not in [44100, 96000]:
+                messagebox.showerror("Input Error", "Sample rate must be 44100 or 96000.")
+                return
+            bd = int(bd_var.get())
+            if bd not in [16, 24]:
+                messagebox.showerror("Input Error", "Bit depth must be 16 or 24.")
+                return
+
+            import live_spectrogram
+            live_spectrogram.FS = sr
+            live_spectrogram.BIT_DEPTH = bd
+            messagebox.showinfo("Microphone Settings", f"Settings updated: {sr} Hz, {bd}-bit.")
+            settings_win.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Invalid input: {e}")
+
+    # Apply Button
+    apply_btn = tk.Button(settings_win, text="Apply", command=apply_settings, bg="#3a3a3a", fg="white")
+    apply_btn.pack(pady=(5, 10))
+
+    # Optional: Force focus so user can't click behind the dialog
+    settings_win.grab_set()
+
+# ------------------------------
 # COM Port Handler
 # ------------------------------
 def set_com_port():
@@ -414,30 +473,51 @@ def open_serial_debug():
     global debug_window
     debug_window = show_serial_debug_window(debug_window)
 
-# File menu with "Reset Experiment"
 file_menu = tk.Menu(menubar, tearoff=0)
 file_menu.add_command(label="Reset Experiment", command=reset_experiment)
 menubar.add_cascade(label="File", menu=file_menu)
 
-# Tools menu (empty for now)
 tools_menu = tk.Menu(menubar, tearoff=0)
 tools_menu.add_command(label="Serial Debugging", command=open_serial_debug)
+tools_menu.add_command(label="Microphone Settings", command=set_microphone_settings)
 menubar.add_cascade(label="Tools", menu=tools_menu)
 
-# Help menu with an About option
 help_menu = tk.Menu(menubar, tearoff=0)
-help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "Wind Tunnel FFT v0.98 (alpha)"))
+help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "WindBender v1.0"))
 menubar.add_cascade(label="Help", menu=help_menu)
 
 # Attach the menubar to the root window
 root.config(menu=menubar)
 
-# Dark background for entire window
-root.configure(bg="#2b2b2b")
+left_panel = tk.Frame(root, bg="#2b2b2b", width=290)
+left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=0)
+left_panel.pack_propagate(False)
 
-# Create frames with dark backgrounds
-left_frame = tk.Frame(root, bg="#2b2b2b")
-left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+left_canvas = tk.Canvas(left_panel, bg="#2b2b2b", highlightthickness=0, bd=0, width=270)
+left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# Give the scrollbar a distinct trough and background so it's clearly visible
+scrollbar = tk.Scrollbar(
+    left_panel,
+    orient="vertical",
+    width=20,
+    command=left_canvas.yview,
+    bg="#505050",         # Scrollbar background
+    troughcolor="#404040", # The trough (track) color
+    highlightthickness=0
+)
+scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+left_canvas.configure(yscrollcommand=scrollbar.set)
+
+left_frame = tk.Frame(left_canvas, bg="#2b2b2b")
+left_canvas.create_window((10, 10), window=left_frame, anchor="nw")
+
+def onFrameConfigure(event):
+    # Always make the scroll region bigger than the visible canvas
+    left_canvas.configure(scrollregion=(0, 0, 280, 2000))
+
+left_frame.bind("<Configure>", onFrameConfigure)
 
 right_frame = tk.Frame(root, bg="#2b2b2b")
 right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -484,7 +564,7 @@ operation_plot, = axs[0, 1].plot(freqs, operation_spl, color='aquamarine', lw=1)
 noise_isolated_plot, = axs[1, 0].plot(freqs, noise_isolated_spl, color='gold', lw=1)
 
 for freq_ax in [axs[0,0], axs[0,1], axs[1,0]]:
-    freq_ax.axvspan(1, 1715, facecolor='gray', alpha=0.3)
+    freq_ax.axvspan(1, 1905, facecolor='gray', alpha=0.3)
 
 bottom_right_gs = axs[1,1].get_gridspec()
 axs[1,1].remove()
