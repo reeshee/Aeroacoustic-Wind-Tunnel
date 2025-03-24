@@ -162,7 +162,12 @@ def compute_1_3_octave_band_spl(freqs, mag_db_spl):
     
 def setup_plot():
     """Initializes a Matplotlib figure with subplots for real-time FFT visualization."""
-    fig, axs = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
+    fig, axs = plt.subplots(
+        2, 2,
+        figsize=(12, 8),
+        constrained_layout=True,
+        gridspec_kw={'height_ratios': [1, 1]}  # Bottom row is 1.4x taller than top row
+    )
     
     # Top-left: Background noise FFT
     axs[0, 0].set_title("Background Noise FFT")
@@ -182,7 +187,7 @@ def setup_plot():
     axs[0, 1].set_ylabel('SPL (dB)')
     axs[0, 1].grid(True, which="both", ls="-", alpha=0.5)
 
-    # Bottom (Merged): Noise-Isolated FFT
+    # Bottom-left: Noise-Isolated FFT
     axs[1, 0].set_title("Noise-Isolated FFT")
     axs[1, 0].set_xscale('log')
     axs[1, 0].set_xlim([20, FS / 2])
@@ -191,7 +196,8 @@ def setup_plot():
     axs[1, 0].set_ylabel('SPL (dB)')
     axs[1, 0].grid(True, which="both", ls="-", alpha=0.5)
 
-    axs[1, 1].axis("off")  # Disable bottom-right subplot (not needed)
+    # Bottom-right cell is replaced later with subgridspec, so just turn it off
+    axs[1, 1].axis("off")
 
     return fig, axs
 

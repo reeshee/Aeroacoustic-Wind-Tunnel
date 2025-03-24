@@ -9,9 +9,11 @@ import sounddevice as sd
 import threading
 import time
 import matplotlib
-matplotlib.use("TkAgg")  # Use the TkAgg backend for embedding
+matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
+from matplotlib.pyplot import figure
+from helpers import show_serial_debug_window
 
 # Pillow for loading images
 from PIL import Image, ImageTk
@@ -24,15 +26,12 @@ def resource_path(relative_path):
     Get absolute path to resource, works for dev and for PyInstaller.
     """
     try:
-        # When running in a PyInstaller bundle, sys._MEIPASS is where files are extracted
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-# ------------------------------
-# Import your existing FFT functions
-# ------------------------------
+
 from live_spectrogram import (
     compute_fft,
     compute_1_3_octave_band_spl,
@@ -44,14 +43,8 @@ from live_spectrogram import (
     audio_queue
 )
 
-# ------------------------------
-# Import the COM port module for fan speed control
-# ------------------------------
 from com_port import ComPortHandler
 
-# ------------------------------
-# Global Variables for Experiment Data
-# ------------------------------
 output_folder = None
 background_spl = None
 operation_spl = None
@@ -81,7 +74,9 @@ fan_speed_record_thread = None
 experiment_start_time = None
 time_series = []
 speed_series = []
-time_speed_line = None  # This will be the red line for the time-series plot
+pwm_time_series = []
+pwm_series = []
+time_speed_line = None
 
 # ------------------------------
 # Experiment Folder Functions
@@ -96,7 +91,7 @@ def set_output_folder(folder):
 
 def start_new_experiment():
     from tkinter import simpledialog
-    global output_folder, experiment_start_time, time_series, speed_series
+    global output_folder, experiment_start_time, time_series, speed_series, pwm_time_series, pwm_series
     custom_name = simpledialog.askstring("Experiment Name", "Enter a custom experiment name:")
     if custom_name is None or custom_name.strip() == "":
         start_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -107,6 +102,8 @@ def start_new_experiment():
     experiment_start_time = time.time()
     time_series = []
     speed_series = []
+    pwm_time_series = []
+    pwm_series = []
     messagebox.showinfo("New Experiment", f"New experiment folder created:\n{output_folder}")
 
 def reset_experiment():
@@ -115,14 +112,30 @@ def reset_experiment():
         com_handler.send_fan_speed(0)  # Stop the fan
     except Exception as e:
         messagebox.showerror("Error", f"Could not stop the fan: {e}")
-    # Reset FFT plots by clearing their data (here we simply set empty arrays)
-    update_plot(axs[0,0], background_plot, np.array([]), "Background Noise FFT", fig)
-    update_plot(axs[0,1], operation_plot, np.array([]), "Operation Noise FFT", fig)
-    update_plot(axs[1,0], noise_isolated_plot, np.array([]), "Noise-Isolated FFT", fig)
+
+    background_plot.set_data([], [])
+    axs[0,0].relim()
+    axs[0,0].autoscale_view()
+    axs[0,0].set_title("Background Noise FFT")
+    
+    # Clear Operation Noise FFT plot
+    operation_plot.set_data([], [])
+    axs[0,1].relim()
+    axs[0,1].autoscale_view()
+    axs[0,1].set_title("Operation Noise FFT")
+    
+    # Clear Noise-Isolated FFT plot
+    noise_isolated_plot.set_data([], [])
+    axs[1,0].relim()
+    axs[1,0].autoscale_view()
+    axs[1,0].set_title("Noise-Isolated FFT")
+    
     # Reset the time-series plot (assuming you use time_speed_line for Air Speed vs Time)
-    global time_series, speed_series
+    global time_series, speed_series, pwm_time_series, pwm_series
     time_series = []
     speed_series = []
+    pwm_time_series = []
+    pwm_series = []
     time_speed_line.set_data([], [])
     canvas.draw()
 
@@ -193,12 +206,7 @@ def compute_noise_isolation():
 # COM Port Fan Speed & PWM Section
 # ------------------------------
 def handle_serial_data(data):
-    """
-    Callback for COM port data.
-    Expects sensor readings prefixed with "AD" (e.g., "AD1.01")
-    or PWM signals prefixed with "PWM" (e.g., "PWM180").
-    """
-    global current_air_speed, last_update_time, last_speed, current_pwm
+    global current_air_speed, last_update_time, last_speed, current_pwm, debug_window
     try:
         data = data.strip()
         if data.startswith("AD"):
@@ -218,6 +226,9 @@ def handle_serial_data(data):
                 current_pwm = data
         else:
             print("Arduino Console:", data)
+        # Duplicate the data into the serial debug window
+        if debug_window is not None and debug_window.winfo_exists():
+            root.after(0, lambda: debug_window.append_data(data))
         root.after(0, update_fan_speed_label)
     except Exception as e:
         print("Error in handle_serial_data:", e)
@@ -249,17 +260,24 @@ def set_fan_speed():
         messagebox.showerror("Error", f"Unexpected error: {e}")
 
 def periodic_fan_check():
-    """
-    Periodically update the air speed status label and the time-series plot.
-    Called via root.after().
-    """
     update_fan_speed_label()
-    if experiment_start_time is not None and isinstance(current_air_speed, (int, float)):
+    if experiment_start_time is not None:
         t = time.time() - experiment_start_time
-        time_series.append(t)
-        speed_series.append(current_air_speed)
-        time_speed_line.set_data(time_series, speed_series)
-        axs[1,1].set_xlim(0, t + 1)
+
+        # Update Speed vs. Time
+        if isinstance(current_air_speed, (int, float)):
+            time_series.append(t)
+            speed_series.append(current_air_speed)
+            time_speed_line.set_data(time_series, speed_series)
+            ax_speed.set_xlim(0, t + 1)
+
+        # Update PWM vs. Time
+        if isinstance(current_pwm, (int, float)):
+            pwm_time_series.append(t)
+            pwm_series.append(current_pwm)
+            time_pwm_line.set_data(pwm_time_series, pwm_series)
+            ax_pwm.set_xlim(0, t + 1)
+
     canvas.draw()
     root.after(125, periodic_fan_check)
 
@@ -367,6 +385,60 @@ def set_y_axis_specific():
     canvas.draw()
 
 # ------------------------------
+# Microphone Customization
+# ------------------------------
+def set_microphone_settings():
+    # Create a Toplevel window
+    settings_win = tk.Toplevel(root)
+    settings_win.title("Microphone Settings")
+    settings_win.configure(bg="#2b2b2b")
+
+    # Variables to store user selections
+    sr_var = tk.StringVar(value="44100")
+    bd_var = tk.StringVar(value="16")
+
+    # Label + Dropdown for Sample Rate
+    freq_label = tk.Label(settings_win, text="Sample Rate:", fg="white", bg="#2b2b2b")
+    freq_label.pack(pady=(10,0))
+    freq_dropdown = tk.OptionMenu(settings_win, sr_var, "44100", "96000")
+    freq_dropdown.config(bg="#3a3a3a", fg="white", highlightthickness=0)
+    freq_dropdown.pack(pady=(0,10))
+
+    # Label + Dropdown for Bit Depth
+    bit_label = tk.Label(settings_win, text="Bit Depth:", fg="white", bg="#2b2b2b")
+    bit_label.pack(pady=(0,0))
+    bit_dropdown = tk.OptionMenu(settings_win, bd_var, "16", "24")
+    bit_dropdown.config(bg="#3a3a3a", fg="white", highlightthickness=0)
+    bit_dropdown.pack(pady=(0,10))
+
+    # Callback for "Apply" button
+    def apply_settings():
+        try:
+            sr = int(sr_var.get())
+            if sr not in [44100, 96000]:
+                messagebox.showerror("Input Error", "Sample rate must be 44100 or 96000.")
+                return
+            bd = int(bd_var.get())
+            if bd not in [16, 24]:
+                messagebox.showerror("Input Error", "Bit depth must be 16 or 24.")
+                return
+
+            import live_spectrogram
+            live_spectrogram.FS = sr
+            live_spectrogram.BIT_DEPTH = bd
+            messagebox.showinfo("Microphone Settings", f"Settings updated: {sr} Hz, {bd}-bit.")
+            settings_win.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Invalid input: {e}")
+
+    # Apply Button
+    apply_btn = tk.Button(settings_win, text="Apply", command=apply_settings, bg="#3a3a3a", fg="white")
+    apply_btn.pack(pady=(5, 10))
+
+    # Optional: Force focus so user can't click behind the dialog
+    settings_win.grab_set()
+
+# ------------------------------
 # COM Port Handler
 # ------------------------------
 def set_com_port():
@@ -395,36 +467,64 @@ root.state("zoomed")
 # Create a menubar
 menubar = tk.Menu(root)
 
-# File menu with "Reset Experiment"
+debug_window = None
+
+def open_serial_debug():
+    global debug_window
+    debug_window = show_serial_debug_window(debug_window)
+
 file_menu = tk.Menu(menubar, tearoff=0)
 file_menu.add_command(label="Reset Experiment", command=reset_experiment)
 menubar.add_cascade(label="File", menu=file_menu)
 
-# Tools menu (empty for now)
 tools_menu = tk.Menu(menubar, tearoff=0)
+tools_menu.add_command(label="Serial Debugging", command=open_serial_debug)
+tools_menu.add_command(label="Microphone Settings", command=set_microphone_settings)
 menubar.add_cascade(label="Tools", menu=tools_menu)
 
-# Help menu with an About option
 help_menu = tk.Menu(menubar, tearoff=0)
-help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "Wind Tunnel FFT v0.96"))
+help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "WindBender v1.0"))
 menubar.add_cascade(label="Help", menu=help_menu)
 
 # Attach the menubar to the root window
 root.config(menu=menubar)
 
-# Dark background for entire window
-root.configure(bg="#2b2b2b")
+left_panel = tk.Frame(root, bg="#2b2b2b", width=290)
+left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=0)
+left_panel.pack_propagate(False)
 
-# Create frames with dark backgrounds
-left_frame = tk.Frame(root, bg="#2b2b2b")
-left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+left_canvas = tk.Canvas(left_panel, bg="#2b2b2b", highlightthickness=0, bd=0, width=270)
+left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# Give the scrollbar a distinct trough and background so it's clearly visible
+scrollbar = tk.Scrollbar(
+    left_panel,
+    orient="vertical",
+    width=20,
+    command=left_canvas.yview,
+    bg="#505050",         # Scrollbar background
+    troughcolor="#404040", # The trough (track) color
+    highlightthickness=0
+)
+scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+left_canvas.configure(yscrollcommand=scrollbar.set)
+
+left_frame = tk.Frame(left_canvas, bg="#2b2b2b")
+left_canvas.create_window((10, 10), window=left_frame, anchor="nw")
+
+def onFrameConfigure(event):
+    # Always make the scroll region bigger than the visible canvas
+    left_canvas.configure(scrollregion=(0, 0, 280, 2000))
+
+left_frame.bind("<Configure>", onFrameConfigure)
 
 right_frame = tk.Frame(root, bg="#2b2b2b")
 right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 # Create the figure & embed it
 fig, axs = setup_plot()
-fig.set_constrained_layout(True)
+# fig.set_constrained_layout(True)
 
 # Make figure background black
 fig.patch.set_facecolor("#000000")
@@ -459,20 +559,49 @@ background_spl = np.full_like(freqs, -50)
 operation_spl = np.full_like(freqs, -50)
 noise_isolated_spl = np.full_like(freqs, -50)
 
-background_plot, = axs[0, 0].plot(freqs, background_spl, color='blue', lw=1)
-operation_plot, = axs[0, 1].plot(freqs, operation_spl, color='blue', lw=1)
-noise_isolated_plot, = axs[1, 0].plot(freqs, noise_isolated_spl, color='blue', lw=1)
+background_plot, = axs[0, 0].plot(freqs, background_spl, color='violet', lw=1)
+operation_plot, = axs[0, 1].plot(freqs, operation_spl, color='aquamarine', lw=1)
+noise_isolated_plot, = axs[1, 0].plot(freqs, noise_isolated_spl, color='gold', lw=1)
 
 for freq_ax in [axs[0,0], axs[0,1], axs[1,0]]:
-    freq_ax.axvspan(1, 1715, facecolor='gray', alpha=0.3)
+    freq_ax.axvspan(1, 1905, facecolor='gray', alpha=0.3)
 
-# Configure the bottom-right subplot for time-series (Air Speed vs. Time)
-axs[1,1].axis("on")
-time_speed_line, = axs[1,1].plot([], [], color='red', lw=2)
-axs[1,1].set_ylim(-1, 11)
-axs[1,1].set_xlabel("Time (s)", color='white')
-axs[1,1].set_ylabel("Air Speed (m/s)", color='white')
-axs[1,1].set_title("Air Speed vs. Time", color='white')
+bottom_right_gs = axs[1,1].get_gridspec()
+axs[1,1].remove()
+
+sub_gs = bottom_right_gs[1,1].subgridspec(2, 1, height_ratios=[1, 1], hspace=0)
+
+ax_speed = fig.add_subplot(sub_gs[0,0])
+ax_speed.set_facecolor("#000000")
+ax_speed.tick_params(axis='x', colors='white')
+ax_speed.tick_params(axis='y', colors='white')
+ax_speed.xaxis.label.set_color('white')
+ax_speed.yaxis.label.set_color('white')
+ax_speed.title.set_color('white')
+for spine in ax_speed.spines.values():
+    spine.set_color('white')
+
+time_speed_line, = ax_speed.plot([], [], color='red', lw=2)
+ax_speed.set_ylim(-1, 11)
+ax_speed.set_xlabel("Time (s)", color='white')
+ax_speed.set_ylabel("Air Speed (m/s)", color='white')
+ax_speed.set_title("Air Speed vs. Time", color='white')
+
+ax_pwm = fig.add_subplot(sub_gs[1,0])
+ax_pwm.set_facecolor("#000000")
+ax_pwm.tick_params(axis='x', colors='white')
+ax_pwm.tick_params(axis='y', colors='white')
+ax_pwm.xaxis.label.set_color('white')
+ax_pwm.yaxis.label.set_color('white')
+ax_pwm.title.set_color('white')
+for spine in ax_pwm.spines.values():
+    spine.set_color('white')
+
+time_pwm_line, = ax_pwm.plot([], [], color='lime', lw=2)
+ax_pwm.set_ylim(0, 260)
+ax_pwm.set_xlabel("Time (s)", color='white')
+ax_pwm.set_ylabel("PWM", color='white')
+ax_pwm.set_title("PWM vs. Time", color='white')
 
 # ------------------------------
 # LOAD & ATTACH BUTTON IMAGES
