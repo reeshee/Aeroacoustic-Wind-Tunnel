@@ -9,12 +9,12 @@ const int BRAKE_PIN = 8; // Brake signal (BRK)
 const int DIR_PIN = 7;   // Direction signal (F/R)
 const int EN_PIN = 2;    // Enable signal (EN)
 
-const int AVERAGE_COUNT = 256; // Number of averaging points for integral control
+const int AVERAGE_COUNT = 512; // Number of averaging points for integral control
 const int GAIN_POINTS = 6;  // Number of data points for the gain lookup table, should be one per meter per second
 
-const float pGains[GAIN_POINTS] = {0.03, 0.055, 0.065, 0.07, 0.05, 0.07};             // Proportional constant for control    
-const float dGains[GAIN_POINTS] = {0.005, 0.007, 0.007, 0.01, 0.005, 0.01};             // Derivatice constant for control
-const float iGains[GAIN_POINTS] = {0.065, 0.065, 0.075, 0.08, 0.1, 0.1};             // Integral constant for control
+const float pGains[GAIN_POINTS] = {0.03, 0.04, 0.035, 0.04, 0.04, 0.06};             // Proportional constant for control    
+const float dGains[GAIN_POINTS] = {0.01, 0.01, 0.01, 0.01, 0.02, 0.01};             // Derivatice constant for control
+const float iGains[GAIN_POINTS] = {0.1, 0.15, 0.15, 0.15, 0.2, 0.2};             // Integral constant for control
 
 float Kp = 0;
 float Kd = 0;
@@ -165,19 +165,19 @@ void loop()
     float i = integralError * Ki;
 
     // PD Controller
-    float control = 255 * (p + i + d) / userSpeed;
+    float control = 255 * (p + i + d) / speed_mps;
 
     int controlInt = (int)(control);
     float controlDecimal = control - controlInt;
 
-    // int newPWM = 0;
+    int newPWM = 0;
 
-    // if(controlDecimal >= 0.5)
-    //   newPWM = int(speed_pwm + control) + 1;
-    // else
-    //   newPWM = int(speed_pwm + control);
+    if(controlDecimal >= 0.5)
+      newPWM = int(speed_pwm + control) + 1;
+    else
+      newPWM = int(speed_pwm + control);
 
-    int newPWM = int(speed_pwm + control);
+    //int newPWM = int(speed_pwm + control);
     
     speed_pwm = constrain(newPWM, 0, 255);    // Constrain the PWM boundaries
 
@@ -258,4 +258,3 @@ float linInterpolate(const float gains[GAIN_POINTS], float speed)
   Serial.println(gain);
 
   return gain;
-}

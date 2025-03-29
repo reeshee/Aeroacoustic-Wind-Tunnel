@@ -54,6 +54,9 @@ OPERATION_FFT_FILE = None
 NOISE_ISOLATED_FFT_FILE = None
 NOISE_ISOLATED_THIRDOCT_FILE = None
 
+use_mic_calibration = False
+mic_calibration_data = None
+
 # ------------------------------
 # Global Variables for COM Port / Sensor Data
 # ------------------------------
@@ -159,7 +162,9 @@ def record_background():
                 time.sleep(0.01)
         if collected_audio:
             full_audio = np.concatenate(collected_audio)
-            _, background_spl = compute_fft(full_audio)
+            freqs, background_spl = compute_fft(full_audio)
+            if use_mic_calibration and mic_calibration_data:
+                background_spl = apply_mic_calibration(freqs, background_spl)
             root.after(0, lambda: update_plot(axs[0, 0], background_plot, background_spl, "Background Noise FFT", fig))
     threading.Thread(target=record, daemon=True).start()
 
@@ -180,7 +185,9 @@ def record_operation():
                 time.sleep(0.01)
         if collected_audio:
             full_audio = np.concatenate(collected_audio)
-            _, operation_spl = compute_fft(full_audio)
+            freqs, operation_spl = compute_fft(full_audio)
+            if use_mic_calibration and mic_calibration_data:
+                operation_spl = apply_mic_calibration(freqs, operation_spl)
             root.after(0, lambda: update_plot(axs[0, 1], operation_plot, operation_spl, "Operation Noise FFT", fig))
     threading.Thread(target=record, daemon=True).start()
 
@@ -385,6 +392,75 @@ def set_y_axis_specific():
     canvas.draw()
 
 # ------------------------------
+# Microphone Calibration File
+# ------------------------------
+def apply_mic_calibration(freqs, spl_array):
+    calibrated_spl = np.copy(spl_array)
+    cal_freqs = np.array(sorted(mic_calibration_data.keys()))
+    cal_values = np.array([mic_calibration_data[f] for f in cal_freqs])
+    interp = np.interp(freqs, cal_freqs, cal_values)
+    return calibrated_spl - interp
+
+# ------------------------------
+# Dark Mode
+# ------------------------------
+def toggle_dark_light():
+    global is_dark_mode
+    new_bg = "white" if is_dark_mode else "#2b2b2b"
+    new_fg = "black" if is_dark_mode else "white"
+    new_entry_bg = "lightgray" if is_dark_mode else "#3a3a3a"
+    new_canvas_bg = new_bg
+    new_fig_bg = new_bg if is_dark_mode else "#000000"
+    fan_button_frame.config(bg=new_bg)
+    set_speed_button.config(bg=new_bg, activebackground=new_bg)
+    stop_button.config(bg=new_bg, activebackground=new_bg)
+
+    is_dark_mode = not is_dark_mode
+
+    # Main containers
+    root.config(bg=new_bg)
+    left_panel.config(bg=new_bg)
+    left_canvas.config(bg=new_bg)
+    left_frame.config(bg=new_bg)
+    right_frame.config(bg=new_bg)
+    canvas.get_tk_widget().config(bg=new_canvas_bg)
+    toolbar.config(bg=new_bg)
+    toolbar.update()
+
+    # All widgets inside left_frame
+    for widget in left_frame.winfo_children():
+        cls = widget.winfo_class()
+        if cls in ("Label", "Button"):
+            widget.config(bg=new_bg, fg=new_fg)
+        elif cls == "Entry":
+            widget.config(bg=new_entry_bg, fg=new_fg, insertbackground=new_fg)
+
+    # Matplotlib figure + axes
+    fig.patch.set_facecolor(new_fig_bg)
+    for row in axs:
+        for ax in row:
+            ax.set_facecolor(new_fig_bg)
+            ax.tick_params(axis='x', colors=new_fg)
+            ax.tick_params(axis='y', colors=new_fg)
+            ax.xaxis.label.set_color(new_fg)
+            ax.yaxis.label.set_color(new_fg)
+            ax.title.set_color(new_fg)
+            for spine in ax.spines.values():
+                spine.set_color(new_fg)
+
+    for ax in [ax_speed, ax_pwm]:
+        ax.set_facecolor(new_fig_bg)
+        ax.tick_params(axis='x', colors=new_fg)
+        ax.tick_params(axis='y', colors=new_fg)
+        ax.xaxis.label.set_color(new_fg)
+        ax.yaxis.label.set_color(new_fg)
+        ax.title.set_color(new_fg)
+        for spine in ax.spines.values():
+            spine.set_color(new_fg)
+
+    canvas.draw()
+
+# ------------------------------
 # Microphone Customization
 # ------------------------------
 def set_microphone_settings():
@@ -473,8 +549,47 @@ def open_serial_debug():
     global debug_window
     debug_window = show_serial_debug_window(debug_window)
 
+def set_manual_calibration():
+    global use_mic_calibration
+    use_mic_calibration = False
+    messagebox.showinfo("Calibration Mode", "Switched to Manual Calibration Mode")
+
+from tkinter import filedialog
+
+def set_mic_calibration():
+    global use_mic_calibration, mic_calibration_data
+
+    file_path = filedialog.askopenfilename(
+        title="Select Microphone Calibration File",
+        filetypes=[("Text Files", "*.txt")]
+    )
+
+    if not file_path:
+        messagebox.showinfo("Cancelled", "Microphone calibration file selection cancelled.")
+        return
+
+    try:
+        mic_calibration_data = {}
+        with open(file_path, "r") as f:
+            for line in f:
+                if line.strip():
+                    parts = line.strip().split()
+                    if len(parts) >= 2:
+                        freq = float(parts[0])
+                        db = float(parts[1])
+                        mic_calibration_data[freq] = db
+
+        use_mic_calibration = True
+        messagebox.showinfo("Calibration Mode", f"Loaded microphone calibration file:\n{os.path.basename(file_path)}")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load calibration file:\n{e}")
+
 file_menu = tk.Menu(menubar, tearoff=0)
 file_menu.add_command(label="Reset Experiment", command=reset_experiment)
+file_menu.add_command(label="Manual Calibration Mode", command=lambda: set_manual_calibration())
+file_menu.add_command(label="Microphone Calibration Mode", command=lambda: set_mic_calibration())
+file_menu.add_command(label="Toggle Dark/Light Mode", command=toggle_dark_light)
 menubar.add_cascade(label="File", menu=file_menu)
 
 tools_menu = tk.Menu(menubar, tearoff=0)
@@ -868,6 +983,8 @@ set_y_axis_button = tk.Button(
 )
 set_y_axis_button.image = set_y_axis_img_tk
 set_y_axis_button.pack(pady=5)
+
+is_dark_mode = True
 
 # Start periodic fan speed checks
 periodic_fan_check()
