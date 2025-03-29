@@ -989,5 +989,32 @@ is_dark_mode = True
 # Start periodic fan speed checks
 periodic_fan_check()
 
+# Start periodic fan speed checks
+periodic_fan_check()
+
+def on_close():
+    global recording_fan_speed
+    recording_fan_speed = False
+
+    try:
+        if com_handler:
+            com_handler.close()
+    except:
+        pass
+
+    try:
+        sd.stop()
+    except:
+        pass
+
+    try:
+        root.destroy()
+    except:
+        pass
+
+    os._exit(0)
+
+root.protocol("WM_DELETE_WINDOW", on_close)
+
 # Main loop
 root.mainloop()
