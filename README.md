@@ -2,7 +2,7 @@
 
 ## [Final Design Report](https://docs.google.com/document/d/1UaNozU0gymNr-kiQ7B2jLVc1SX_kSHz9aF-SaiJXmZw/edit?usp=sharing)
 
-## [CAD](https://drive.google.com/file/d/17LGYEsIKsCTQs-TkdhqZ3E6_HRw0FwKc/view?usp=sharing))
+## [CAD](https://drive.google.com/file/d/17LGYEsIKsCTQs-TkdhqZ3E6_HRw0FwKc/view?usp=sharing)
 
 -------------------------------------------------------------------------------------------------------
 
